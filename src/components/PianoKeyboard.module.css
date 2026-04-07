@@ -1,0 +1,162 @@
+.wrap {
+  position: relative;
+  width: 100%;
+  max-width: min(100%, 38rem);
+  margin: 0 auto;
+  user-select: none;
+  /* Local tokens so keys stay readable in both color schemes */
+  --pk-white-top: #ffffff;
+  --pk-white-mid: #f1f5f9;
+  --pk-white-bottom: #e2e8f0;
+  --pk-white-border: #94a3b8;
+  --pk-black-top: #334155;
+  --pk-black-mid: #0f172a;
+  --pk-black-bottom: #020617;
+  --pk-black-rim: #000000;
+}
+
+.whiteRow {
+  display: flex;
+  gap: 4px;
+}
+
+.whiteKeyOuter {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.whiteKeyOuterCompact {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.whiteKey {
+  width: 100%;
+  height: 5.5rem;
+  border-radius: 0 0 6px 6px;
+  background: linear-gradient(
+    180deg,
+    var(--pk-white-top) 0%,
+    var(--pk-white-mid) 45%,
+    var(--pk-white-bottom) 100%
+  );
+  border: 1px solid var(--pk-white-border);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.85),
+    0 3px 0 rgb(15 23 42 / 0.18);
+}
+
+.whiteKeyHighlight {
+  outline: 3px solid color-mix(in oklab, var(--accent) 75%, var(--fg));
+  outline-offset: 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--accent) 14%, #ffffff),
+    color-mix(in oklab, var(--accent) 8%, var(--pk-white-mid))
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 3px 0 color-mix(in oklab, var(--accent) 35%, #0f172a);
+}
+
+.keyHint {
+  margin-top: 0.35rem;
+  font-size: 0.65rem;
+  opacity: 0.5;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.blackRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3.25rem;
+  pointer-events: none;
+}
+
+.blackKeySlot {
+  position: absolute;
+  top: 0;
+  width: 1.3rem;
+  margin-left: -0.65rem;
+}
+
+.blackKey {
+  margin: 0 auto;
+  width: 1.15rem;
+  height: 3.1rem;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(
+    180deg,
+    var(--pk-black-top) 0%,
+    var(--pk-black-mid) 35%,
+    var(--pk-black-bottom) 100%
+  );
+  border: 1px solid var(--pk-black-rim);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    0 2px 0 rgb(0 0 0 / 0.95);
+}
+
+.blackKeyHighlight {
+  outline: 2px solid color-mix(in oklab, var(--accent) 85%, white);
+  outline-offset: 1px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent),
+    0 2px 0 rgb(0 0 0 / 0.95);
+}
+
+@media (prefers-color-scheme: dark) {
+  .wrap {
+    /* Ivory-style whites so they read clearly against the dark app chrome */
+    --pk-white-top: #f8fafc;
+    --pk-white-mid: #e2e8f0;
+    --pk-white-bottom: #cbd5e1;
+    --pk-white-border: #64748b;
+    /* Near-black keys, distinct from white key fill */
+    --pk-black-top: #1e293b;
+    --pk-black-mid: #020617;
+    --pk-black-bottom: #000000;
+    --pk-black-rim: #000000;
+  }
+
+  .whiteKey {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.55),
+      0 3px 0 rgb(0 0 0 / 0.65);
+  }
+
+  .whiteKeyHighlight {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--accent) 28%, #f8fafc),
+      color-mix(in oklab, var(--accent) 12%, #cbd5e1)
+    );
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.5),
+      0 3px 0 color-mix(in oklab, var(--accent) 45%, #000);
+  }
+
+  .keyHint {
+    opacity: 0.72;
+  }
+
+  .blackKey {
+    box-shadow:
+      inset 0 1px 0 rgb(148 163 184 / 0.22),
+      0 2px 0 rgb(0 0 0 / 1);
+  }
+}
