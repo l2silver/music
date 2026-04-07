@@ -40,6 +40,11 @@ export type ModeProgress = {
   hadMissThisUnit?: boolean;
   awaitingUnitAdvance?: boolean;
   modeComplete?: boolean;
+  /**
+   * Correct-answer points in timed quizzes for this pack are multiplied by this
+   * (implicit 1 if omitted). Halves when the learner restarts the pack from the lesson.
+   */
+  packPointScale?: number;
 };
 
 export type SavedGame = {
@@ -53,7 +58,7 @@ export type SavedGame = {
   factRewardWeight: Record<string, number>;
   /**
    * Per mode: unit indices (1…maxUnit) that already received the one-time medal bonus
-   * for clearing that unit’s pack with a perfect run.
+   * for first passing that unit’s pack (cumulative quiz) in this mode.
    */
   packMedalBonusesAtUnit?: Partial<Record<GameMode, number[]>>;
   grandComplete?: boolean;
@@ -137,6 +142,20 @@ function coerceHadMiss(p: ModeProgress): boolean {
   return p.hadMissThisUnit === true;
 }
 
+function coercePackPointScaleField(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  if (raw <= 0 || raw > 1) return undefined;
+  return Math.round(raw * 1e9) / 1e9;
+}
+
+function attachPackPointScale(raw: unknown, prog: ModeProgress): ModeProgress {
+  const ps = coercePackPointScaleField(
+    (raw as Record<string, unknown>)?.packPointScale,
+  );
+  if (ps === undefined) return prog;
+  return { ...prog, packPointScale: ps };
+}
+
 function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
   if (!x || typeof x !== "object") return { ...fallback };
   const p = x as ModeProgress;
@@ -163,7 +182,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     const introLen = allFactsForUnit(p.unit).length;
     if (introLen === 0 || p.introIndex >= introLen) return { ...fallback };
     if (p.quiz !== null) return { ...fallback };
-    return {
+    return attachPackPointScale(x, {
       highestUnlockedUnit: p.highestUnlockedUnit,
       unit: p.unit,
       phase: p.phase,
@@ -174,7 +193,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
       modeComplete: p.modeComplete,
       reviewWrongKeys: undefined,
       hadMissThisUnit: coerceHadMiss(p) ? true : undefined,
-    };
+    });
   }
 
   if (p.phase === "fullMixBridge") {
@@ -182,7 +201,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     if (p.quiz !== null) return { ...fallback };
     const rk = p.reviewWrongKeys;
     if (Array.isArray(rk) && rk.length > 0) return { ...fallback };
-    return {
+    return attachPackPointScale(x, {
       highestUnlockedUnit: p.highestUnlockedUnit,
       unit: p.unit,
       phase: "fullMixBridge",
@@ -193,7 +212,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
       modeComplete: p.modeComplete,
       reviewWrongKeys: undefined,
       hadMissThisUnit: coerceHadMiss(p) ? true : undefined,
-    };
+    });
   }
 
   if (p.phase === "review") {
@@ -208,7 +227,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     } else if (!validateFullKeys(rk, p.unit)) {
       return { ...fallback };
     }
-    return {
+    return attachPackPointScale(x, {
       highestUnlockedUnit: p.highestUnlockedUnit,
       unit: p.unit,
       phase: "review",
@@ -219,7 +238,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
       awaitingUnitAdvance: p.awaitingUnitAdvance,
       modeComplete: p.modeComplete,
       hadMissThisUnit: coerceHadMiss(p) ? true : undefined,
-    };
+    });
   }
 
   if (!isQuizSlice(p.quiz)) return { ...fallback };
@@ -245,7 +264,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     if (inferred === null) return { ...fallback };
     quizScope = inferred;
   }
-  return {
+  return attachPackPointScale(x, {
     highestUnlockedUnit: p.highestUnlockedUnit,
     unit: p.unit,
     phase: p.phase,
@@ -256,7 +275,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     modeComplete: p.modeComplete,
     reviewWrongKeys: undefined,
     hadMissThisUnit: coerceHadMiss(p) ? true : undefined,
-  };
+  });
 }
 
 function coerceTotalPoints(x: unknown): number {
@@ -639,6 +658,44 @@ export function startRetryAfterReview(g: SavedGame): SavedGame {
   });
 }
 
+/** Reshuffle the current timed round from question 1 (same scope / full deck or retry subset). */
+export function restartCurrentQuizRound(g: SavedGame): SavedGame {
+  return mapActiveMode(g, (pr) => {
+    if (pr.phase !== "quiz" || !pr.quiz || !pr.quizScope) return pr;
+    const q = pr.quiz;
+    const u = pr.unit;
+    const scope = pr.quizScope;
+    const fullDeck =
+      scope === "narrow"
+        ? q.roundKeys.length === factIdsForUnit(u).length
+        : q.roundKeys.length === factIdsCumulativeThroughUnit(u).length;
+    const nextQuiz: QuizSlice = fullDeck
+      ? scope === "narrow"
+        ? ensureNarrowQuizState(u, null)
+        : ensureFullQuizState(u, null)
+      : {
+          roundKeys: shuffle([...q.roundKeys]),
+          roundIndex: 0,
+          wrongThisRound: [],
+        };
+    return { ...pr, quiz: nextQuiz };
+  });
+}
+
+/** Back to intro cards; halves point scale for this pack (redo penalty). */
+export function restartPackFromLessonWithPointPenalty(g: SavedGame): SavedGame {
+  return mapActiveMode(g, (pr) => ({
+    ...pr,
+    phase: "intro",
+    introIndex: 0,
+    quiz: null,
+    quizScope: undefined,
+    reviewWrongKeys: undefined,
+    hadMissThisUnit: undefined,
+    packPointScale: (pr.packPointScale ?? 1) * 0.5,
+  }));
+}
+
 export function goToMenu(g: SavedGame): SavedGame {
   return { ...g, screen: "menu" };
 }
@@ -678,6 +735,7 @@ export function selectUnit(g: SavedGame, unit: number): SavedGame {
         awaitingUnitAdvance: false,
         reviewWrongKeys: undefined,
         hadMissThisUnit: false,
+        packPointScale: undefined,
       };
   return {
     ...g,

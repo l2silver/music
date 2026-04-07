@@ -25,6 +25,7 @@ import {
   formatNextRewardPreview,
   formatPointsDisplay,
   rewardWeightForFact,
+  roundMeetsPassAccuracy,
 } from "@/lib/points";
 import {
   clearGame,
@@ -40,6 +41,8 @@ import {
   selectMode,
   selectUnit,
   startRetryAfterReview,
+  restartCurrentQuizRound,
+  restartPackFromLessonWithPointPenalty,
   withPackMedalBonusIfEligible,
   type ModeProgress,
   type SavedGame,
@@ -100,6 +103,13 @@ export function MusicGame() {
   const handleTimeoutRef = useRef<() => void>(() => {});
   const timeoutFiredRef = useRef(false);
   const [pointsBumpKey, setPointsBumpKey] = useState(0);
+  const [lessonPeekOpen, setLessonPeekOpen] = useState(false);
+  const [lessonPeekIndex, setLessonPeekIndex] = useState(0);
+
+  const openLessonPeek = useCallback(() => {
+    setLessonPeekIndex(0);
+    setLessonPeekOpen(true);
+  }, []);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -165,6 +175,7 @@ export function MusicGame() {
         introIndex: pr.introIndex + 1,
       }));
     });
+    setLessonPeekOpen(false);
     setSelectedLetter(null);
     setSelectedAccidental(null);
   }, [persist, startQuizFromIntro]);
@@ -182,12 +193,15 @@ export function MusicGame() {
         const mergeHadMiss = (pr: ModeProgress) =>
           pr.hadMissThisUnit === true || !correct ? true : undefined;
 
+        const pointScale = g.progress[g.activeMode]!.packPointScale ?? 1;
+
         const withPoints = (next: SavedGame): SavedGame => {
           if (correct) {
             const { totalPoints, factRewardWeight } = applyFactCorrect(
               next.totalPoints,
               next.factRewardWeight,
               currentKey,
+              pointScale,
             );
             return { ...next, totalPoints, factRewardWeight };
           }
@@ -218,7 +232,12 @@ export function MusicGame() {
           );
         }
 
-        if (wrongArr.length === 0) {
+        const roundPasses =
+          scope === "narrow"
+            ? wrongArr.length === 0
+            : roundMeetsPassAccuracy(wrongArr.length, q.roundKeys.length);
+
+        if (roundPasses) {
           if (scope === "narrow") {
             return withPoints(
               mapActiveMode(g, (pr) => ({
@@ -471,29 +490,98 @@ export function MusicGame() {
   }
 
   const p = game.progress[game.activeMode]!;
+  const lessonFacts = allFactsForUnit(p.unit);
+  const peekFact =
+    lessonPeekOpen && lessonFacts[lessonPeekIndex] !== undefined
+      ? lessonFacts[lessonPeekIndex]
+      : null;
+  const peekMnemonic = unitMnemonic(p.unit);
+  const lessonPeekLayer =
+    lessonPeekOpen && peekFact ? (
+      <div
+        className={styles.lessonPeekBackdrop}
+        onClick={() => setLessonPeekOpen(false)}
+        role="presentation"
+      >
+        <div
+          className={styles.lessonPeekPanel}
+          role="dialog"
+          aria-label="Lesson cards"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className={styles.lessonPeekHeader}>
+            <span>
+              Lesson — card {lessonPeekIndex + 1} of {lessonFacts.length}
+            </span>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={() => setLessonPeekOpen(false)}
+            >
+              Close
+            </button>
+          </div>
+          {peekFact.kind === "piano" ? (
+            <>
+              <PianoKeyboard highlightMidi={peekFact.midi} showKeyLabels />
+              <p className={styles.prompt}>White key highlighted — letter name</p>
+            </>
+          ) : (
+            <StaffSvg fact={peekFact} className={styles.staffWrap} />
+          )}
+          <div className={styles.answerLine}>{answerLabel(peekFact)}</div>
+          {peekMnemonic ? (
+            <div className={styles.tip}>
+              <div className={styles.tipLabel}>Mnemonic</div>
+              {peekMnemonic}
+            </div>
+          ) : null}
+          <div className={styles.lessonPeekNav}>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              disabled={lessonPeekIndex <= 0}
+              onClick={() => setLessonPeekIndex((i) => Math.max(0, i - 1))}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              disabled={lessonPeekIndex + 1 >= lessonFacts.length}
+              onClick={() =>
+                setLessonPeekIndex((i) =>
+                  Math.min(lessonFacts.length - 1, i + 1),
+                )
+              }
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null;
 
   if (p.awaitingUnitAdvance) {
     const isFinalUnit = p.unit >= maxUnit();
-    const packPerfect = p.hadMissThisUnit !== true;
+    const hadSlips = p.hadMissThisUnit === true;
     return (
       <div className={styles.root}>
         {topBar}
         <div className={styles.centerStack}>
           <h1 className={styles.title}>
-            {!packPerfect
-              ? "Redo this unit"
-              : isFinalUnit
-                ? `${modeTitle(game.activeMode)} — unit complete!`
-                : "Nice work!"}
+            {isFinalUnit
+              ? `${modeTitle(game.activeMode)} — unit complete!`
+              : "Nice work!"}
           </h1>
           <p className={styles.subtitle}>
-            {!packPerfect
-              ? "To unlock the next lesson, you need a perfect run — no wrong answers or timeouts in either timed phase (this unit only, then the full mix through this unit). You’ll redo the intro cards and both rounds from the start."
-              : isFinalUnit
-                ? game.activeMode === "gold"
-                  ? "You finished the final unit in Gold. The full medal path is yours."
-                  : `You've finished every unit in ${modeTitle(game.activeMode)}. The next mode unlocks on the map.`
-                : "Perfect round — every answer correct. The next unit is now on the map."}
+            {isFinalUnit
+              ? game.activeMode === "gold"
+                ? "You finished the final unit in Gold. The full medal path is yours."
+                : `You've finished every unit in ${modeTitle(game.activeMode)}. The next mode unlocks on the map.`
+              : hadSlips
+                ? "You scored above 89% on the full mix for this unit — enough to move on. You can always replay from the map for more practice."
+                : "You scored above 89% on the full mix through this unit. The next lesson is now on the map."}
           </p>
           <button
             type="button"
@@ -507,27 +595,6 @@ export function MusicGame() {
                   Math.max(pr.highestUnlockedUnit, pr.unit + 1),
                 );
                 const finalU = pr.unit >= maxUnit();
-                const perfect = pr.hadMissThisUnit !== true;
-
-                if (!perfect) {
-                  return {
-                    ...g,
-                    screen: "play",
-                    progress: {
-                      ...g.progress,
-                      [m]: {
-                        ...pr,
-                        phase: "intro",
-                        introIndex: 0,
-                        quiz: null,
-                        quizScope: undefined,
-                        awaitingUnitAdvance: false,
-                        reviewWrongKeys: undefined,
-                        hadMissThisUnit: undefined,
-                      },
-                    },
-                  };
-                }
 
                 if (finalU) {
                   const cleared: ModeProgress = {
@@ -541,6 +608,7 @@ export function MusicGame() {
                     introIndex: 0,
                     reviewWrongKeys: undefined,
                     hadMissThisUnit: undefined,
+                    packPointScale: undefined,
                   };
                   let nextGame: SavedGame;
                   if (m === "bronze") {
@@ -577,6 +645,7 @@ export function MusicGame() {
                   introIndex: 0,
                   reviewWrongKeys: undefined,
                   hadMissThisUnit: undefined,
+                  packPointScale: undefined,
                 };
                 return withPackMedalBonusIfEligible(
                   {
@@ -590,13 +659,11 @@ export function MusicGame() {
               });
             }}
           >
-            {!packPerfect
-              ? "Try again from the start"
-              : isFinalUnit && game.activeMode === "gold"
-                ? "Continue"
-                : isFinalUnit
-                  ? "Back to modes"
-                  : "Back to lessons"}
+            {isFinalUnit && game.activeMode === "gold"
+              ? "Continue"
+              : isFinalUnit
+                ? "Back to modes"
+                : "Back to lessons"}
           </button>
         </div>
       </div>
@@ -697,9 +764,10 @@ export function MusicGame() {
             </h1>
             <p className={styles.subtitle}>
               {sec} seconds per timed question. Each pack: intro cards, a timed round on{" "}
-              <strong>this unit only</strong>, a short full-mix heads-up, then a timed
-              round mixing <strong>units 1 through your current unit</strong>. Unlock the
-              next lesson with zero misses across both timed rounds.
+              <strong>this unit only</strong>, a short full-mix heads-up, then the{" "}
+              <strong>cumulative</strong> timed mix (units 1–U). You need a score{" "}
+              <strong>above 89%</strong> on that full mix to unlock the next lesson. The
+              narrow round must be <strong>perfect</strong> (no misses) before the bridge.
             </p>
           </div>
           <div className={styles.actions}>
@@ -788,6 +856,7 @@ export function MusicGame() {
     return (
       <div className={styles.root}>
         {topBar}
+        {lessonPeekLayer}
         <div className={styles.headerRow}>
           <div>
             <h1 className={styles.title}>
@@ -799,6 +868,13 @@ export function MusicGame() {
             </p>
           </div>
           <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={openLessonPeek}
+            >
+              Review lesson
+            </button>
             <button
               type="button"
               className={styles.ghostBtn}
@@ -823,9 +899,18 @@ export function MusicGame() {
         <div className={styles.card}>
           <p className={styles.subtitle} style={{ marginBottom: "1rem" }}>
             The full round includes {mixLabel}, shuffled, at {sec} second
-            {sec === 1 ? "" : "s"} per question — same rules: clear with a perfect round
-            (no misses) to finish the pack.
+            {sec === 1 ? "" : "s"} per question. You pass this unit when you score{" "}
+            <strong>above 89%</strong> on this cumulative round (timeouts count as misses).
           </p>
+          <div className={styles.quizToolRow}>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={() => persist((g) => restartPackFromLessonWithPointPenalty(g))}
+            >
+              Start pack over from lesson
+            </button>
+          </div>
           <button
             type="button"
             className={styles.primaryBtn}
@@ -859,6 +944,7 @@ export function MusicGame() {
     return (
       <div className={styles.root}>
         {topBar}
+        {lessonPeekLayer}
         <div className={styles.headerRow}>
           <div>
             <h1 className={styles.title}>Reviewing hard questions</h1>
@@ -882,6 +968,13 @@ export function MusicGame() {
               onClick={() => persist((g) => goToModePicker(g))}
             >
               Modes
+            </button>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={openLessonPeek}
+            >
+              Review lesson
             </button>
             {IS_DEV ? (
               <button type="button" className={styles.ghostBtn} onClick={handleReset}>
@@ -909,6 +1002,14 @@ export function MusicGame() {
             }}
           >
             Practice these questions
+          </button>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            style={{ marginTop: "0.65rem", width: "100%" }}
+            onClick={() => persist((g) => restartPackFromLessonWithPointPenalty(g))}
+          >
+            Start pack over from lesson (points for this pack halve)
           </button>
         </div>
       </div>
@@ -943,6 +1044,7 @@ export function MusicGame() {
     return (
       <div className={styles.root}>
         {topBar}
+        {lessonPeekLayer}
         <div className={styles.headerRow}>
           <div>
             <h1 className={styles.title}>
@@ -954,6 +1056,13 @@ export function MusicGame() {
             </p>
           </div>
           <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={openLessonPeek}
+            >
+              Browse lesson
+            </button>
             <button
               type="button"
               className={styles.ghostBtn}
@@ -1005,8 +1114,9 @@ export function MusicGame() {
           </button>
         </div>
         <p className={styles.footerNote}>
-          After intro cards: timed round on <strong>this unit only</strong>, then (after
-          a clean round) the <strong>full mix</strong> through this unit.
+          After intro cards: timed narrow round with <strong>no misses</strong>, then the{" "}
+          <strong>full cumulative mix</strong> (score <strong>above 89%</strong>) to finish
+          the unit.
         </p>
       </div>
     );
@@ -1072,6 +1182,7 @@ export function MusicGame() {
   return (
     <div className={styles.root}>
       {topBar}
+      {lessonPeekLayer}
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>
@@ -1082,9 +1193,21 @@ export function MusicGame() {
               ? `This round: ${UNIT_TITLES[p.unit - 1] ?? `Unit ${p.unit}`} only. `
               : `This round: full mix (units 1–${p.unit}). `}
             {sec}s per question. Timeouts count as misses.
+            {p.packPointScale !== undefined && p.packPointScale < 1
+              ? ` Pack redo: each correct answer earns ${(p.packPointScale * 100).toFixed(
+                  0,
+                )}% of the usual points.`
+              : null}
           </p>
         </div>
         <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={openLessonPeek}
+          >
+            Review lesson
+          </button>
           <button
             type="button"
             className={styles.ghostBtn}
@@ -1115,10 +1238,31 @@ export function MusicGame() {
           <span className={styles.rewardHint}>
             +
             {formatNextRewardPreview(
-              rewardWeightForFact(game.factRewardWeight, key),
+              rewardWeightForFact(game.factRewardWeight, key) *
+                (p.packPointScale ?? 1),
             )}{" "}
             if correct
           </span>
+        </div>
+        <div className={styles.quizToolRow}>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={() => {
+              persist((g) => restartCurrentQuizRound(g));
+              setSelectedLetter(null);
+              setSelectedAccidental(null);
+            }}
+          >
+            Restart this timed round
+          </button>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={() => persist((g) => restartPackFromLessonWithPointPenalty(g))}
+          >
+            Start pack over from lesson
+          </button>
         </div>
         <div className={styles.timerTrack} aria-hidden>
           <div
@@ -1192,9 +1336,10 @@ export function MusicGame() {
         </div>
       </div>
       <p className={styles.footerNote}>
-        Misses open a review, then a retry with the same scope. A clean{" "}
-        {p.quizScope === "narrow" ? "narrow" : "full"} round continues the pack (narrow →
-        full-mix bridge → full → done).
+        Misses open a review, then a retry with the same scope. A round with a score{" "}
+        Narrow rounds must be <strong>perfect</strong>; the full mix passes with a score{" "}
+        <strong>above 89%</strong>. Starting the pack over from the lesson halves points for
+        that pack.
       </p>
     </div>
   );

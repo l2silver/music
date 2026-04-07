@@ -43,7 +43,7 @@ export function modeIsUnlocked(state: ModeUnlockState, mode: GameMode): boolean 
   return state.goldUnlocked;
 }
 
-/** One-time bonus to `totalPoints` when you first clear a unit pack in this mode (perfect run). */
+/** One-time bonus to `totalPoints` when you first pass a unit pack in this mode (cumulative quiz). */
 export function packMedalCompletionBonus(mode: GameMode): number {
   switch (mode) {
     case "bronze":

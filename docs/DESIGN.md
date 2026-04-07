@@ -2,7 +2,7 @@
 
 ## Product goals
 
-Help learners build fluent recognition of **piano keys** and **notes on the staff** through a **sequential curriculum**, a **learn-then-drill** flow, **timed practice** at three difficulty paces, **targeted retries**, and clear **progression rules** (including a **perfect-run** requirement across **both** timed phases of each unit pack), analogous to the multiplication tutor in `multiplication/docs/DESIGN.md`.
+Help learners build fluent recognition of **piano keys** and **notes on the staff** through a **sequential curriculum**, a **learn-then-drill** flow, **timed practice** at three difficulty paces, **targeted retries**, and clear **progression rules**: the **narrow** timed round must be **perfect** (no misses), and the **cumulative / full-mix** round passes with **accuracy above 89%**—that full round gates unlocking the next unit; same idea as in `multiplication/docs/DESIGN.md`.
 
 Core skills (high level):
 
@@ -35,7 +35,7 @@ Units unlock **in this order**; each unit completes before the next is available
 
 1. **Mode picker** — Choose **Bronze**, **Silver**, or **Gold**. Silver unlocks after clearing every unit (1–10) in Bronze; Gold after the same in Silver.
 2. **Unit map** — One tile per curriculum unit. Only units up to **`highestUnlockedUnit`** are selectable; cleared packs show **Done** and are not replayed in that mode (same idea as completed levels in multiplication).
-3. **Play** — A fixed sequence: **intro cards** (this unit’s facts), **narrow timed quiz** (this unit only), **full-mix bridge** screen, **full timed quiz** (cumulative facts from units **1 … U**), optional **review** rounds, then **pack complete** when the **full** quiz finishes clean.
+3. **Play** — A fixed sequence: **intro cards** (this unit’s facts), **narrow timed quiz** (this unit only), **full-mix bridge** screen, **full timed quiz** (cumulative facts from units **1 … U**), optional **review** rounds, then **pack complete** when the **full** quiz passes the accuracy threshold.
 
 Timer per question (aligned with multiplication):
 
@@ -60,19 +60,26 @@ Progress for the active unit is stored in **`ModeProgress`** (`src/lib/persisten
 |-------|---------|
 | **`intro`** | One card per fact **in this unit**, no timer. Mnemonics where useful. |
 | **`quiz`** | Timed drill. Scope is **`quizScope`**: **`narrow`** (this unit only) or **`full`** (units 1…U). Shuffled **round**; wrong answers and timeouts add to a **wrong stack** for the round. |
-| **`fullMixBridge`** | **Between** a clean **narrow** round and the **full** quiz: non-timed heads-up. **Start full mix** begins **`quiz`** with **`quizScope: "full"`**. |
-| **`review`** | After a round with **any** misses: list missed facts with answers; **Practice these questions** starts another **`quiz`** with **only** those keys (same **`quizScope`** as the failed round). |
+| **`fullMixBridge`** | **Between** a passing **narrow** round and the **full** quiz: non-timed heads-up. **Start full mix** begins **`quiz`** with **`quizScope: "full"`**. |
+| **`review`** | After a round that **fails** the accuracy threshold: list missed facts with answers; **Practice these questions** starts another **`quiz`** with **only** those keys (same **`quizScope`** as the failed round). |
 
 **`quizScope`** is stored during **`quiz`** and **`review`**; cleared during **`intro`** and **`fullMixBridge`**. Legacy **`v: 1`** saves infer **`narrow`** vs **`full`** from which fact keys appear in the quiz slice when possible.
+
+### Pass rule (timed rounds)
+
+- **Narrow** (`quizScope: "narrow"`): a round **passes** only with **zero** wrong or timed-out questions (including review retries that still use narrow scope).
+- **Full / cumulative** (`quizScope: "full"`): a round **passes** when **more than 89%** of questions are correct (**`roundMeetsPassAccuracy`** in **`src/lib/points.ts`**, `LEVEL_PASS_ACCURACY_THRESHOLD = 0.89`).
+- **Narrow** must pass to reach **`fullMixBridge`** and then the **full** cumulative quiz.
+- **Unlocking the next unit** is satisfied by passing the **full / cumulative** timed round for that unit (**> 89%**). Earlier slips in the pack do **not** block unlock once that full round passes.
 
 ### Typical happy path
 
 1. **Intro** — advance through all unit cards → start **narrow** quiz.
-2. **Narrow quiz** — complete a round with **zero** wrong/timeout → **`fullMixBridge`**.
+2. **Narrow quiz** — **perfect** round → **`fullMixBridge`**.
 3. **Full mix bridge** — learner reads the heads-up → **Start full mix**.
-4. **Full quiz** — complete a round with **zero** wrong/timeout → **pack-complete** (awaiting advance).
+4. **Full quiz** — finish with **> 89%** correct → **pack-complete** (awaiting advance).
 
-If either timed phase ends with misses, flow is **review → retry quiz** (same scope) until some round ends clean. A clean **narrow** round always leads to the bridge and then the **full** phase; a clean **full** round completes the pack (subject to **perfect run**, below).
+If a timed phase **does not** pass, flow is **review → retry quiz** (subset or same composition rules as today) until a round passes.
 
 **Unit 1:** narrow and full key sets are the **same** (only unit 1 exists); the learner still goes through **narrow → bridge → full** for a consistent ritual (same as level 1 in multiplication).
 
@@ -80,8 +87,13 @@ If either timed phase ends with misses, flow is **review → retry quiz** (same 
 
 - **Round** = one shuffled pass over the current key set (narrow, full, or review subset).
 - **Duplicate** misses on the same fact in one round still produce **one** retry entry.
-- **`hadMissThisUnit`** is set if **any** timed answer in **either** phase (including review retries) is wrong or timed out. On pack-complete, if that flag is set, **Continue** does **not** unlock the next unit; the learner restarts the pack from **intro** with state cleared.
-- Unlocking the next unit (or mode complete / grand complete) requires a **perfect** pack: **no** misses across **both** timed phases for that unit.
+- **`hadMissThisUnit`** is still set when any timed answer is wrong or timed out (pack-wide flag for copy / messaging); it does **not** block unlocking after a passing **full** round.
+- Learners can **restart the current timed round** from question 1 (reshuffle; full deck vs subset detected in **`restartCurrentQuizRound`**).
+- Learners can **start the pack over from the intro lesson**; each time they do, **`packPointScale`** halves (see Points), applied to correct-answer scoring for that pack until the unit is passed or the pack is re-entered cleanly from the map (fresh **`selectUnit`** clears the scale).
+
+### Lesson review during a pack
+
+From **intro** (browse), **quiz**, **review**, or **fullMixBridge**, the learner can open a **lesson overlay** with the same material as the intro cards for the **current unit**, without leaving the timed flow.
 
 ## Points system & backoff
 
@@ -95,9 +107,11 @@ Implemented in **`src/lib/points.ts`**; stored on the save as **`totalPoints`** 
 
 Intro cards **do not** change points or weights. Only **timed quiz** answers (including review retries) do.
 
+**`packPointScale`** (on **`ModeProgress`**, default implicit **1**): multiplied onto the points added by **`applyFactCorrect`** for that pack attempt. Halves on each **start pack over from lesson** (`restartPackFromLessonWithPointPenalty`).
+
 ### On a correct timed answer
 
-1. Add the fact’s **current weight** `w` to **`totalPoints`**.
+1. Add **`packPointScale ×`** the fact’s **current weight** `w` to **`totalPoints`**.
 2. **Backoff (decay):** `w' = POINT_FLOOR + (w - POINT_FLOOR) × POINT_WEIGHT_DECAY` with **`POINT_WEIGHT_DECAY = 0.78`**, quantized to three decimals, clamped to **[POINT_FLOOR, POINT_PEAK]**.
 
 ### On a wrong answer or timeout
@@ -106,9 +120,9 @@ Intro cards **do not** change points or weights. Only **timed quiz** answers (in
 
 ### Medal pack bonus & redeem
 
-- **One-time bonus** when you **first** clear a unit pack with a **perfect** run in that mode (`packMedalCompletionBonus` in `src/lib/modes.ts`: Bronze **0.5**, Silver **1**, Gold **1.5**), tracked in **`packMedalBonusesAtUnit`** so it is not awarded twice for the same unit in the same mode.
+- **One-time bonus** when you **first** pass a unit pack in that mode (`packMedalCompletionBonus` in `src/lib/modes.ts`: Bronze **0.5**, Silver **1**, Gold **1.5**), tracked in **`packMedalBonusesAtUnit`** so it is not awarded twice for the same unit in the same mode.
 - Total points in the **top-right**; correct answers can **animate** the pill (`prefers-reduced-motion` disables it).
-- Quiz UI shows a **preview** of the next reward for the current question.
+- Quiz UI shows a **preview** of the next reward for the current question (including **`packPointScale`**).
 - **Redeem** (parent password **`1234`**) clears **`totalPoints`** and **`factRewardWeight`** (client-only).
 
 ## Edge cases
@@ -119,7 +133,7 @@ Intro cards **do not** change points or weights. Only **timed quiz** answers (in
 ## Persistence
 
 - **`localStorage`** key: `music-tutor-v1`.
-- **`v: 2`**: `screen`, `activeMode`, per-mode **`ModeProgress`** (`unit`, **`phase`**: `intro` \| `fullMixBridge` \| `quiz` \| `review`, **`quizScope`**: `narrow` \| `full`, quiz slice, `reviewWrongKeys`, `hadMissThisUnit`, `awaitingUnitAdvance`, `modeComplete`, …), **`totalPoints`**, **`factRewardWeight`**, **`packMedalBonusesAtUnit`**, mode unlock flags, optional `grandComplete`.
+- **`v: 2`**: `screen`, `activeMode`, per-mode **`ModeProgress`** (`unit`, **`phase`**: `intro` \| `fullMixBridge` \| `quiz` \| `review`, **`quizScope`**: `narrow` \| `full`, quiz slice, `reviewWrongKeys`, `hadMissThisUnit`, `awaitingUnitAdvance`, `modeComplete`, **`packPointScale`**, …), **`totalPoints`**, **`factRewardWeight`**, **`packMedalBonusesAtUnit`**, mode unlock flags, optional `grandComplete`.
 - **`v: 1`** loads are **upgraded** to **`v: 2`** on read (quiz scope inferred where possible).
 - **Reset progress** clears storage and returns a fresh game.
 
@@ -129,7 +143,7 @@ Intro cards **do not** change points or weights. Only **timed quiz** answers (in
 |------|-----------|
 | Fact keys, cumulative sets, shuffle | `src/lib/facts.ts` |
 | Bronze / Silver / Gold timers & pack medal bonus | `src/lib/modes.ts` |
-| Points math & backoff | `src/lib/points.ts` |
+| Points math, pass threshold & backoff | `src/lib/points.ts` |
 | Save / load / migrate / quiz scopes | `src/lib/persistence.ts` |
 | UI + state machine | `src/components/MusicGame.tsx` |
 | Styles | `src/components/MusicGame.module.css` |
