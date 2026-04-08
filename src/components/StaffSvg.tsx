@@ -40,9 +40,8 @@ export function StaffSvg({ fact, className }: StaffSvgProps) {
   return (
     <svg
       className={className}
-      viewBox="0 0 260 118"
+      viewBox="0 -6 260 152"
       width="100%"
-      height={140}
       role="img"
       aria-label="Staff notation"
     >

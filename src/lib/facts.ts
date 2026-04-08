@@ -1,3 +1,5 @@
+import type { GameMode } from "@/lib/modes";
+
 export type ClefKind = "treble" | "bass" | "piano";
 
 export type AccidentalKind = "natural" | "sharp" | "flat";
@@ -120,37 +122,33 @@ const UNITS: readonly MusicFact[][] = [
     { id: "b-sp-e3", midi: 52, letter: "E", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-sp-g3", midi: 55, letter: "G", accidental: "natural", clef: "bass", kind: "staff" },
   ],
-  // 6 — below treble
+  // 6 — below treble (four steps nearest the staff)
   [
     { id: "t-bel-d4", midi: 62, letter: "D", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-bel-c4", midi: 60, letter: "C", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-bel-b3", midi: 59, letter: "B", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-bel-a3", midi: 57, letter: "A", accidental: "natural", clef: "treble", kind: "staff" },
-    { id: "t-bel-g3", midi: 55, letter: "G", accidental: "natural", clef: "treble", kind: "staff" },
   ],
-  // 7 — above bass
+  // 7 — above bass (four steps nearest the staff)
   [
     { id: "b-abo-b3", midi: 59, letter: "B", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-abo-c4", midi: 60, letter: "C", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-abo-d4", midi: 62, letter: "D", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-abo-e4", midi: 64, letter: "E", accidental: "natural", clef: "bass", kind: "staff" },
-    { id: "b-abo-f4", midi: 65, letter: "F", accidental: "natural", clef: "bass", kind: "staff" },
   ],
-  // 8 — below bass
+  // 8 — below bass (four steps nearest the staff)
   [
     { id: "b-bel-f2", midi: 41, letter: "F", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-bel-e2", midi: 40, letter: "E", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-bel-d2", midi: 38, letter: "D", accidental: "natural", clef: "bass", kind: "staff" },
     { id: "b-bel-c2", midi: 36, letter: "C", accidental: "natural", clef: "bass", kind: "staff" },
-    { id: "b-bel-b1", midi: 35, letter: "B", accidental: "natural", clef: "bass", kind: "staff" },
   ],
-  // 9 — above treble
+  // 9 — above treble (four steps nearest the staff)
   [
     { id: "t-abo-g5", midi: 79, letter: "G", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-abo-a5", midi: 81, letter: "A", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-abo-b5", midi: 83, letter: "B", accidental: "natural", clef: "treble", kind: "staff" },
     { id: "t-abo-c6", midi: 84, letter: "C", accidental: "natural", clef: "treble", kind: "staff" },
-    { id: "t-abo-d6", midi: 86, letter: "D", accidental: "natural", clef: "treble", kind: "staff" },
   ],
   // 10 — accidentals (explicit spelling)
   [
@@ -199,14 +197,85 @@ export function factIdsForUnit(unit: number): string[] {
   return allFactsForUnit(unit).map((f) => f.id);
 }
 
-/** All fact ids from units 1 … `unit` (inclusive), for the “full mix” timed round. */
-export function factIdsCumulativeThroughUnit(unit: number): string[] {
+/** Bronze: keyboard + treble/bass staff without ledger lines or accidentals. */
+const BRONZE_PATH: readonly number[] = [1, 2, 3, 4, 5];
+/** Silver: Bronze path + treble ledger (below/above staff); no bass ledger or accidentals. */
+const SILVER_PATH: readonly number[] = [1, 2, 3, 4, 5, 6, 9];
+/** Gold: full curriculum. */
+const GOLD_PATH: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+export function unitsInMode(mode: GameMode): readonly number[] {
+  switch (mode) {
+    case "bronze":
+      return BRONZE_PATH;
+    case "silver":
+      return SILVER_PATH;
+    case "gold":
+      return GOLD_PATH;
+    default: {
+      const _: never = mode;
+      return _;
+    }
+  }
+}
+
+export function maxUnitForMode(mode: GameMode): number {
+  const path = unitsInMode(mode);
+  return path[path.length - 1]!;
+}
+
+export function unitInModePath(unit: number, mode: GameMode): boolean {
+  return unitsInMode(mode).includes(unit);
+}
+
+export function nextCurriculumUnitAfter(
+  unit: number,
+  mode: GameMode,
+): number | null {
+  const path = unitsInMode(mode);
+  const i = path.indexOf(unit);
+  if (i < 0 || i >= path.length - 1) return null;
+  return path[i + 1]!;
+}
+
+export function isFinalUnitInMode(unit: number, mode: GameMode): boolean {
+  const path = unitsInMode(mode);
+  return path[path.length - 1] === unit;
+}
+
+/**
+ * Fact ids for the full-mix (cumulative) round: units 1…`unit` that exist in this
+ * mode’s path (e.g. Silver at unit 9 includes 1–5, 6, and 9 — not 7, 8, or 10).
+ */
+export function factIdsCumulativeThroughUnitForMode(
+  unit: number,
+  mode: GameMode,
+): string[] {
   if (!isValidUnit(unit)) return [];
   const out: string[] = [];
+  const allowed = new Set(unitsInMode(mode));
   for (let u = 1; u <= unit; u++) {
-    out.push(...factIdsForUnit(u));
+    if (allowed.has(u)) out.push(...factIdsForUnit(u));
   }
   return out;
+}
+
+/** Human-readable list of unit numbers included in the cumulative mix through `unit`. */
+export function cumulativeUnitSummary(unit: number, mode: GameMode): string {
+  if (!isValidUnit(unit)) return "";
+  const path = unitsInMode(mode);
+  const included = path.filter((u) => u <= unit);
+  if (included.length === 0) return "";
+  if (included.length === 1) return `unit ${included[0]}`;
+  if (mode === "gold" || mode === "bronze") {
+    return `units 1–${unit}`;
+  }
+  return `units ${included.join(", ")}`;
+}
+
+/** All fact ids through `unit` on the full (Gold) curriculum path. */
+export function factIdsCumulativeThroughUnit(unit: number): string[] {
+  return factIdsCumulativeThroughUnitForMode(unit, "gold");
 }
 
 export function getFactById(id: string): MusicFact | undefined {
@@ -232,7 +301,3 @@ export function shuffle<T>(items: readonly T[]): T[] {
   return copy;
 }
 
-export const SELECTABLE_UNITS: readonly number[] = Array.from(
-  { length: UNIT_COUNT },
-  (_, i) => i + 1,
-);

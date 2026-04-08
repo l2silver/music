@@ -5,11 +5,11 @@ export const GAME_MODES: readonly GameMode[] = ["bronze", "silver", "gold"];
 export function secondsForMode(mode: GameMode): number {
   switch (mode) {
     case "bronze":
-      return 10;
+      return 9;
     case "silver":
-      return 8;
+      return 7;
     case "gold":
-      return 6;
+      return 5;
     default: {
       const _: never = mode;
       return _;

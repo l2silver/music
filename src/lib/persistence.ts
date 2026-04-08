@@ -5,12 +5,13 @@ import {
 import { POINT_FLOOR, POINT_PEAK } from "@/lib/points";
 import {
   allFactsForUnit,
-  factIdsCumulativeThroughUnit,
+  factIdsCumulativeThroughUnitForMode,
   factIdsForUnit,
   getFactById,
   isValidUnit,
   maxUnit,
   shuffle,
+  unitsInMode,
 } from "@/lib/facts";
 
 export const STORAGE_KEY = "music-tutor-v1";
@@ -92,8 +93,8 @@ function narrowSet(unit: number): Set<string> {
   return new Set(factIdsForUnit(unit));
 }
 
-function fullSet(unit: number): Set<string> {
-  return new Set(factIdsCumulativeThroughUnit(unit));
+function fullSet(unit: number, mode: GameMode): Set<string> {
+  return new Set(factIdsCumulativeThroughUnitForMode(unit, mode));
 }
 
 function validateNarrowKeys(keys: string[], unit: number): boolean {
@@ -101,8 +102,12 @@ function validateNarrowKeys(keys: string[], unit: number): boolean {
   return keys.every((k) => allowed.has(k) && getFactById(k) !== undefined);
 }
 
-function validateFullKeys(keys: string[], unit: number): boolean {
-  const allowed = fullSet(unit);
+function validateFullKeys(
+  keys: string[],
+  unit: number,
+  mode: GameMode,
+): boolean {
+  const allowed = fullSet(unit, mode);
   return keys.every((k) => allowed.has(k) && getFactById(k) !== undefined);
 }
 
@@ -115,9 +120,13 @@ function inferQuizScopeFromKeys(
   roundKeys: string[],
   wrongKeys: string[],
   unit: number,
+  mode: GameMode,
 ): QuizScope | null {
   if (roundKeys.length === 0) return null;
-  if (validateFullKeys(roundKeys, unit) && validateFullKeys(wrongKeys, unit)) {
+  if (
+    validateFullKeys(roundKeys, unit, mode) &&
+    validateFullKeys(wrongKeys, unit, mode)
+  ) {
     return "full";
   }
   if (validateNarrowKeys(roundKeys, unit) && validateNarrowKeys(wrongKeys, unit)) {
@@ -156,7 +165,11 @@ function attachPackPointScale(raw: unknown, prog: ModeProgress): ModeProgress {
   return { ...prog, packPointScale: ps };
 }
 
-function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
+function parseModeProgress(
+  x: unknown,
+  fallback: ModeProgress,
+  mode: GameMode,
+): ModeProgress {
   if (!x || typeof x !== "object") return { ...fallback };
   const p = x as ModeProgress;
   if (!isValidUnit(p.unit)) return { ...fallback };
@@ -224,7 +237,7 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
     const reviewScope: QuizScope = coerceQuizScope(p.quizScope) ?? "full";
     if (reviewScope === "narrow") {
       if (!validateNarrowKeys(rk, p.unit)) return { ...fallback };
-    } else if (!validateFullKeys(rk, p.unit)) {
+    } else if (!validateFullKeys(rk, p.unit, mode)) {
       return { ...fallback };
     }
     return attachPackPointScale(x, {
@@ -252,14 +265,15 @@ function parseModeProgress(x: unknown, fallback: ModeProgress): ModeProgress {
       quizScope === "narrow"
         ? validateNarrowKeys(q.roundKeys, p.unit) &&
           validateNarrowKeys(q.wrongThisRound, p.unit)
-        : validateFullKeys(q.roundKeys, p.unit) &&
-          validateFullKeys(q.wrongThisRound, p.unit);
+        : validateFullKeys(q.roundKeys, p.unit, mode) &&
+          validateFullKeys(q.wrongThisRound, p.unit, mode);
     if (!ok) return { ...fallback };
   } else {
     const inferred = inferQuizScopeFromKeys(
       q.roundKeys,
       q.wrongThisRound,
       p.unit,
+      mode,
     );
     if (inferred === null) return { ...fallback };
     quizScope = inferred;
@@ -361,7 +375,7 @@ function mergePackMedalsWithModeComplete(
   for (const mode of modes) {
     const set = new Set<number>(coerced?.[mode] ?? []);
     if (progress[mode]?.modeComplete === true) {
-      for (let u = 1; u <= maxUnit(); u++) {
+      for (const u of unitsInMode(mode)) {
         set.add(u);
       }
     }
@@ -371,12 +385,34 @@ function mergePackMedalsWithModeComplete(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function sanitizeModeProgress(p: ModeProgress, mode: GameMode): ModeProgress {
+  const path = unitsInMode(mode);
+  const clampToPath = (u: number): number => {
+    if (!isValidUnit(u)) return path[0]!;
+    if (path.includes(u)) return u;
+    const below = path.filter((x) => x <= u);
+    return below.length > 0 ? below[below.length - 1]! : path[0]!;
+  };
+  const nextHi = clampToPath(p.highestUnlockedUnit);
+  let nextUnit = clampToPath(p.unit);
+  if (nextUnit > nextHi) nextUnit = nextHi;
+  if (nextUnit !== p.unit || nextHi !== p.highestUnlockedUnit) {
+    return {
+      ...defaultModeProgress(),
+      unit: nextUnit,
+      highestUnlockedUnit: nextHi,
+      modeComplete: p.modeComplete,
+    };
+  }
+  return p;
+}
+
 function migrateV1ToV2(g: SavedGameV1): SavedGame {
   const modes: GameMode[] = ["bronze", "silver", "gold"];
   const progress = {} as Record<GameMode, ModeProgress>;
   for (const m of modes) {
     const p = g.progress[m]!;
-    progress[m] = migrateModeProgressV1(p);
+    progress[m] = sanitizeModeProgress(migrateModeProgressV1(p, m), m);
   }
   return {
     v: 2,
@@ -391,7 +427,10 @@ function migrateV1ToV2(g: SavedGameV1): SavedGame {
   };
 }
 
-function migrateModeProgressV1(p: ModeProgressV1Payload): ModeProgress {
+function migrateModeProgressV1(
+  p: ModeProgressV1Payload,
+  mode: GameMode,
+): ModeProgress {
   const base: ModeProgress = {
     highestUnlockedUnit: p.highestUnlockedUnit,
     unit: p.unit,
@@ -449,7 +488,7 @@ function migrateModeProgressV1(p: ModeProgressV1Payload): ModeProgress {
     const rk = p.reviewWrongKeys;
     const scope: QuizScope | null = validateNarrowKeys(rk, u)
       ? "narrow"
-      : validateFullKeys(rk, u)
+      : validateFullKeys(rk, u, mode)
         ? "full"
         : null;
     if (scope !== null) {
@@ -490,9 +529,18 @@ function parseSavedGamePayload(data: Record<string, unknown>): SavedGame | null 
   if (!rawProg || typeof rawProg !== "object") return null;
 
   const progress: Record<GameMode, ModeProgress> = {
-    bronze: parseModeProgress((rawProg as Record<string, unknown>).bronze, fb),
-    silver: parseModeProgress((rawProg as Record<string, unknown>).silver, fb),
-    gold: parseModeProgress((rawProg as Record<string, unknown>).gold, fb),
+    bronze: sanitizeModeProgress(
+      parseModeProgress((rawProg as Record<string, unknown>).bronze, fb, "bronze"),
+      "bronze",
+    ),
+    silver: sanitizeModeProgress(
+      parseModeProgress((rawProg as Record<string, unknown>).silver, fb, "silver"),
+      "silver",
+    ),
+    gold: sanitizeModeProgress(
+      parseModeProgress((rawProg as Record<string, unknown>).gold, fb, "gold"),
+      "gold",
+    ),
   };
 
   const totalPoints = coerceTotalPoints(data.totalPoints);
@@ -606,10 +654,14 @@ export function ensureNarrowQuizState(
   return { roundKeys: keys, roundIndex: 0, wrongThisRound: [] };
 }
 
-export function ensureFullQuizState(unit: number, quiz: QuizSlice | null): QuizSlice {
+export function ensureFullQuizState(
+  unit: number,
+  quiz: QuizSlice | null,
+  mode: GameMode,
+): QuizSlice {
   if (
     quiz &&
-    validateFullKeys(quiz.roundKeys, unit) &&
+    validateFullKeys(quiz.roundKeys, unit, mode) &&
     quiz.roundKeys.length > 0
   ) {
     const clampedIndex = Math.min(
@@ -620,11 +672,11 @@ export function ensureFullQuizState(unit: number, quiz: QuizSlice | null): QuizS
       roundKeys: quiz.roundKeys,
       roundIndex: clampedIndex,
       wrongThisRound: [...new Set(quiz.wrongThisRound)].filter((k) =>
-        validateFullKeys([k], unit),
+        validateFullKeys([k], unit, mode),
       ),
     };
   }
-  const keys = shuffle(factIdsCumulativeThroughUnit(unit));
+  const keys = shuffle(factIdsCumulativeThroughUnitForMode(unit, mode));
   return { roundKeys: keys, roundIndex: 0, wrongThisRound: [] };
 }
 
@@ -665,14 +717,16 @@ export function restartCurrentQuizRound(g: SavedGame): SavedGame {
     const q = pr.quiz;
     const u = pr.unit;
     const scope = pr.quizScope;
+    const mode = g.activeMode;
     const fullDeck =
       scope === "narrow"
         ? q.roundKeys.length === factIdsForUnit(u).length
-        : q.roundKeys.length === factIdsCumulativeThroughUnit(u).length;
+        : q.roundKeys.length ===
+          factIdsCumulativeThroughUnitForMode(u, mode).length;
     const nextQuiz: QuizSlice = fullDeck
       ? scope === "narrow"
         ? ensureNarrowQuizState(u, null)
-        : ensureFullQuizState(u, null)
+        : ensureFullQuizState(u, null, mode)
       : {
           roundKeys: shuffle([...q.roundKeys]),
           roundIndex: 0,
@@ -714,6 +768,7 @@ export function selectUnit(g: SavedGame, unit: number): SavedGame {
   const mode = g.activeMode;
   const p = g.progress[mode]!;
   if (!isValidUnit(unit)) return g;
+  if (!unitsInMode(mode).includes(unit)) return g;
   if (unit > p.highestUnlockedUnit) return g;
   const resume =
     p.unit === unit &&

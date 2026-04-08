@@ -6,10 +6,13 @@ import { PianoKeyboard } from "@/components/PianoKeyboard";
 import { StaffSvg } from "@/components/StaffSvg";
 import {
   allFactsForUnit,
-  maxUnit,
+  cumulativeUnitSummary,
+  isFinalUnitInMode,
+  maxUnitForMode,
+  nextCurriculumUnitAfter,
   parseFactKey,
-  SELECTABLE_UNITS,
   UNIT_TITLES,
+  unitsInMode,
   type AccidentalKind,
   type DiatonicLetter,
 } from "@/lib/facts";
@@ -286,7 +289,7 @@ export function MusicGame() {
     const key = p.quiz.roundKeys[p.quiz.roundIndex];
     if (key === undefined) return;
     const fact = parseFactKey(key);
-    if (p.unit === 10 && selectedAccidental === null) return;
+    if (fact.accidental !== "natural" && selectedAccidental === null) return;
     if (selectedLetter === null) return;
     const ok = answerMatches(fact, p.unit, selectedLetter, selectedAccidental);
     advanceAfterQuizAnswer(ok);
@@ -305,7 +308,7 @@ export function MusicGame() {
   }, [advanceAfterQuizAnswer]);
 
   const answerMs = useMemo(
-    () => (game ? secondsForMode(game.activeMode) * 1000 : 8000),
+    () => (game ? secondsForMode(game.activeMode) * 1000 : 9000),
     [game],
   );
 
@@ -563,7 +566,7 @@ export function MusicGame() {
     ) : null;
 
   if (p.awaitingUnitAdvance) {
-    const isFinalUnit = p.unit >= maxUnit();
+    const isFinalUnit = isFinalUnitInMode(p.unit, game.activeMode);
     const hadSlips = p.hadMissThisUnit === true;
     return (
       <div className={styles.root}>
@@ -588,18 +591,19 @@ export function MusicGame() {
             className={styles.primaryBtn}
             onClick={() => {
               persist((g) => {
+                const pr = g.progress[g.activeMode]!;
                 const m = g.activeMode;
-                const pr = g.progress[m]!;
-                const nextUnlock = Math.min(
-                  maxUnit(),
-                  Math.max(pr.highestUnlockedUnit, pr.unit + 1),
+                const nextAfter = nextCurriculumUnitAfter(pr.unit, m);
+                const nextUnlock = Math.max(
+                  pr.highestUnlockedUnit,
+                  nextAfter ?? pr.highestUnlockedUnit,
                 );
-                const finalU = pr.unit >= maxUnit();
+                const finalU = isFinalUnitInMode(pr.unit, m);
 
                 if (finalU) {
                   const cleared: ModeProgress = {
                     ...pr,
-                    highestUnlockedUnit: maxUnit(),
+                    highestUnlockedUnit: maxUnitForMode(m),
                     awaitingUnitAdvance: false,
                     modeComplete: true,
                     quiz: null,
@@ -678,8 +682,10 @@ export function MusicGame() {
           <div>
             <h1 className={styles.title}>Choose a mode</h1>
             <p className={styles.subtitle}>
-              Clear all <strong>10 lessons</strong> in <strong>Bronze</strong> to unlock{" "}
-              <strong>Silver</strong>, then Silver to unlock <strong>Gold</strong>.
+              Clear all <strong>{unitsInMode("bronze").length} lessons</strong> in{" "}
+              <strong>Bronze</strong> to unlock <strong>Silver</strong>, then all{" "}
+              <strong>{unitsInMode("silver").length}</strong> in Silver to unlock{" "}
+              <strong>Gold</strong> ({unitsInMode("gold").length} lessons).
               Each step uses a shorter timer per question.
             </p>
           </div>
@@ -765,7 +771,8 @@ export function MusicGame() {
             <p className={styles.subtitle}>
               {sec} seconds per timed question. Each pack: intro cards, a timed round on{" "}
               <strong>this unit only</strong>, a short full-mix heads-up, then the{" "}
-              <strong>cumulative</strong> timed mix (units 1–U). You need a score{" "}
+              <strong>cumulative</strong> timed mix (everything in this mode through the
+              current lesson). You need a score{" "}
               <strong>above 89%</strong> on that full mix to unlock the next lesson. The
               narrow round must be <strong>perfect</strong> (no misses) before the bridge.
             </p>
@@ -790,7 +797,7 @@ export function MusicGame() {
           </div>
         </div>
         <div className={styles.unitGrid} role="list">
-          {SELECTABLE_UNITS.map((u) => {
+          {unitsInMode(game.activeMode).map((u) => {
             const unlocked = u <= progMenu.highestUnlockedUnit;
             const completed = isPackCompletedForUnit(
               game,
@@ -837,9 +844,10 @@ export function MusicGame() {
           })}
         </div>
         <p className={styles.footerNote}>
-          Narrow round = new unit only. Full mix = everything from unit 1 through the
-          current unit, shuffled. Review retries keep the same scope as the round you
-          missed.
+          Narrow round = new unit only. Full mix = all facts in this mode through the
+          current lesson (Bronze: main staff only; Silver: adds treble ledger notes;
+          Gold: full curriculum), shuffled. Review retries keep the same scope as the
+          round you missed.
         </p>
       </div>
     );
@@ -851,7 +859,7 @@ export function MusicGame() {
     const mixLabel =
       u <= 1
         ? "unit 1 only (same set as the first round — reshuffled for practice)"
-        : `units 1 through ${u}`;
+        : cumulativeUnitSummary(u, game.activeMode);
 
     return (
       <div className={styles.root}>
@@ -921,7 +929,7 @@ export function MusicGame() {
                   ...pr,
                   phase: "quiz",
                   quizScope: "full",
-                  quiz: ensureFullQuizState(pr.unit, null),
+                  quiz: ensureFullQuizState(pr.unit, null, g.activeMode),
                   reviewWrongKeys: undefined,
                 })),
               );
@@ -1175,9 +1183,10 @@ export function MusicGame() {
   const misses = new Set(q.wrongThisRound).size;
   const sec = secondsForMode(game.activeMode);
 
+  const needsAccidental = fact.accidental !== "natural";
   const canCheck =
     selectedLetter !== null &&
-    (p.unit < 10 || selectedAccidental !== null);
+    (!needsAccidental || selectedAccidental !== null);
 
   return (
     <div className={styles.root}>
@@ -1191,7 +1200,7 @@ export function MusicGame() {
           <p className={styles.subtitle}>
             {p.quizScope === "narrow"
               ? `This round: ${UNIT_TITLES[p.unit - 1] ?? `Unit ${p.unit}`} only. `
-              : `This round: full mix (units 1–${p.unit}). `}
+              : `This round: full mix (${cumulativeUnitSummary(p.unit, game.activeMode)}). `}
             {sec}s per question. Timeouts count as misses.
             {p.packPointScale !== undefined && p.packPointScale < 1
               ? ` Pack redo: each correct answer earns ${(p.packPointScale * 100).toFixed(
@@ -1297,7 +1306,7 @@ export function MusicGame() {
             </button>
           ))}
         </div>
-        {p.unit === 10 ? (
+        {needsAccidental ? (
           <>
             <div className={styles.accLabel}>Accidental</div>
             <div className={styles.accRow}>
