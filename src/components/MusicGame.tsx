@@ -797,7 +797,7 @@ export function MusicGame() {
               game.activeMode,
               u,
             );
-            const playable = unlocked && !completed;
+            const playable = unlocked;
             const inProgress = inProgressUnit === u;
             const title = UNIT_TITLES[u - 1] ?? `Unit ${u}`;
             return (
@@ -827,7 +827,7 @@ export function MusicGame() {
                   {!unlocked
                     ? "Locked"
                     : completed
-                      ? "Done"
+                      ? "Replay"
                       : inProgress
                         ? "Continue"
                         : title}

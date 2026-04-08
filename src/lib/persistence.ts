@@ -715,7 +715,6 @@ export function selectUnit(g: SavedGame, unit: number): SavedGame {
   const p = g.progress[mode]!;
   if (!isValidUnit(unit)) return g;
   if (unit > p.highestUnlockedUnit) return g;
-  if (isPackCompletedForUnit(g, mode, unit)) return g;
   const resume =
     p.unit === unit &&
     !p.awaitingUnitAdvance &&
