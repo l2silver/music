@@ -308,7 +308,10 @@ export function MusicGame() {
   }, [advanceAfterQuizAnswer]);
 
   const answerMs = useMemo(
-    () => (game ? secondsForMode(game.activeMode) * 1000 : 9000),
+    () =>
+      game
+        ? secondsForMode(game.activeMode) * 1000
+        : secondsForMode("bronze") * 1000,
     [game],
   );
 
