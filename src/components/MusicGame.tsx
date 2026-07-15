@@ -103,6 +103,8 @@ export function MusicGame() {
   const [selectedLetter, setSelectedLetter] = useState<DiatonicLetter | null>(null);
   const [selectedAccidental, setSelectedAccidental] =
     useState<AccidentalKind | null>(null);
+  const [answerLocked, setAnswerLocked] = useState(false);
+  const answerLockedRef = useRef(false);
   const handleTimeoutRef = useRef<() => void>(() => {});
   const timeoutFiredRef = useRef(false);
   const [pointsBumpKey, setPointsBumpKey] = useState(0);
@@ -150,6 +152,8 @@ export function MusicGame() {
     setPointsBumpKey(0);
     setSelectedLetter(null);
     setSelectedAccidental(null);
+    answerLockedRef.current = false;
+    setAnswerLocked(false);
   }, []);
 
   const startQuizFromIntro = useCallback((g: SavedGame): SavedGame => {
@@ -282,27 +286,30 @@ export function MusicGame() {
     [persist],
   );
 
-  const submitAnswer = useCallback(() => {
-    if (!game || game.screen !== "play") return;
-    const p = game.progress[game.activeMode]!;
-    if (p.phase !== "quiz" || !p.quiz) return;
-    const key = p.quiz.roundKeys[p.quiz.roundIndex];
-    if (key === undefined) return;
-    const fact = parseFactKey(key);
-    if (fact.accidental !== "natural" && selectedAccidental === null) return;
-    if (selectedLetter === null) return;
-    const ok = answerMatches(fact, p.unit, selectedLetter, selectedAccidental);
-    advanceAfterQuizAnswer(ok);
-    if (ok) setPointsBumpKey((k) => k + 1);
-  }, [
-    game,
-    selectedLetter,
-    selectedAccidental,
-    advanceAfterQuizAnswer,
-  ]);
+  const commitAnswer = useCallback(
+    (letter: DiatonicLetter, acc: AccidentalKind | null) => {
+      if (answerLockedRef.current) return;
+      if (!game || game.screen !== "play") return;
+      const p = game.progress[game.activeMode]!;
+      if (p.phase !== "quiz" || !p.quiz) return;
+      const key = p.quiz.roundKeys[p.quiz.roundIndex];
+      if (key === undefined) return;
+      const fact = parseFactKey(key);
+      if (fact.accidental !== "natural" && acc === null) return;
+      answerLockedRef.current = true;
+      setAnswerLocked(true);
+      const ok = answerMatches(fact, p.unit, letter, acc);
+      advanceAfterQuizAnswer(ok);
+      if (ok) setPointsBumpKey((k) => k + 1);
+    },
+    [game, advanceAfterQuizAnswer],
+  );
 
   useEffect(() => {
     handleTimeoutRef.current = () => {
+      if (answerLockedRef.current) return;
+      answerLockedRef.current = true;
+      setAnswerLocked(true);
       advanceAfterQuizAnswer(false);
     };
   }, [advanceAfterQuizAnswer]);
@@ -334,6 +341,8 @@ export function MusicGame() {
     const deadline = Date.now() + secondsForMode(game.activeMode) * 1000;
     const schedId = window.setTimeout(() => setQuizDeadline(deadline), 0);
     timeoutFiredRef.current = false;
+    answerLockedRef.current = false;
+    setAnswerLocked(false);
 
     const id = window.setInterval(() => {
       const t = Date.now();
@@ -1187,9 +1196,22 @@ export function MusicGame() {
   const sec = secondsForMode(game.activeMode);
 
   const needsAccidental = fact.accidental !== "natural";
-  const canCheck =
-    selectedLetter !== null &&
-    (!needsAccidental || selectedAccidental !== null);
+
+  const onLetterClick = (letter: DiatonicLetter) => {
+    if (answerLocked) return;
+    setSelectedLetter(letter);
+    if (!needsAccidental || selectedAccidental !== null) {
+      commitAnswer(letter, selectedAccidental);
+    }
+  };
+
+  const onAccidentalClick = (kind: AccidentalKind) => {
+    if (answerLocked) return;
+    setSelectedAccidental(kind);
+    if (selectedLetter !== null) {
+      commitAnswer(selectedLetter, kind);
+    }
+  };
 
   return (
     <div className={styles.root}>
@@ -1303,7 +1325,8 @@ export function MusicGame() {
                   ? `${styles.letterBtn} ${styles.letterBtnSelected}`
                   : styles.letterBtn
               }
-              onClick={() => setSelectedLetter(L)}
+              disabled={answerLocked}
+              onClick={() => onLetterClick(L)}
             >
               {L}
             </button>
@@ -1328,7 +1351,8 @@ export function MusicGame() {
                       ? `${styles.letterBtn} ${styles.letterBtnSelected}`
                       : styles.letterBtn
                   }
-                  onClick={() => setSelectedAccidental(kind)}
+                  disabled={answerLocked}
+                  onClick={() => onAccidentalClick(kind)}
                 >
                   {sym}
                 </button>
@@ -1336,16 +1360,6 @@ export function MusicGame() {
             </div>
           </>
         ) : null}
-        <div className={styles.checkRow}>
-          <button
-            type="button"
-            className={styles.primaryBtn}
-            disabled={!canCheck}
-            onClick={submitAnswer}
-          >
-            Check
-          </button>
-        </div>
       </div>
       <p className={styles.footerNote}>
         Misses open a review, then a retry with the same scope. A round with a score{" "}

@@ -562,23 +562,18 @@
   cursor: pointer;
 }
 
-.letterBtn:hover {
+.letterBtn:hover:not(:disabled) {
   border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.letterBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .letterBtnSelected {
   border-color: color-mix(in oklab, var(--accent) 65%, transparent);
   background: color-mix(in oklab, var(--accent) 22%, var(--input-bg));
-}
-
-.checkRow {
-  margin-top: 1rem;
-  display: flex;
-  justify-content: center;
-}
-
-.checkRow .primaryBtn {
-  min-width: 12rem;
 }
 
 .lessonPeekBackdrop {
